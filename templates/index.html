@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Détection d'objets en temps réel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .video-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        video, canvas {
+            width: 640px;
+            height: 480px;
+            background-color: #000;
+            border-radius: 5px;
+        }
+        canvas {
+            display: block;
+        }
+        button {
+            display: block;
+            margin: 10px auto;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎥 Détection d'objets en temps réel</h1>
+    
+    <div id="status">Cliquez sur "Démarrer" pour commencer</div>
+    
+    <div class="container">
+        <div class="video-container">
+            <h3>Webcam</h3>
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+        
+        <div class="video-container">
+            <h3>Détection</h3>
+            <canvas id="output"></canvas>
+        </div>
+    </div>
+    
+    <button id="startBtn">Démarrer la webcam</button>
+    <button id="stopBtn" class="hidden">Arrêter</button>
+    
+    <canvas id="hiddenCanvas" class="hidden"></canvas>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const outputCanvas = document.getElementById('output');
+        const outputCtx = outputCanvas.getContext('2d');
+        const hiddenCanvas = document.getElementById('hiddenCanvas');
+        const hiddenCtx = hiddenCanvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        
+        let stream = null;
+        let isProcessing = false;
+        let animationId = null;
+
+        // Démarrer la webcam
+        startBtn.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    outputCanvas.width = video.videoWidth;
+                    outputCanvas.height = video.videoHeight;
+                    hiddenCanvas.width = video.videoWidth;
+                    hiddenCanvas.height = video.videoHeight;
+                    
+                    startBtn.classList.add('hidden');
+                    stopBtn.classList.remove('hidden');
+                    status.textContent = '✅ Détection en cours...';
+                    
+                    processFrame();
+                };
+                
+            } catch (err) {
+                console.error('Erreur accès webcam:', err);
+                status.textContent = '❌ Erreur: Impossible d\'accéder à la webcam';
+            }
+        });
+
+        // Arrêter la webcam
+        stopBtn.addEventListener('click', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            startBtn.classList.remove('hidden');
+            stopBtn.classList.add('hidden');
+            status.textContent = 'Webcam arrêtée';
+            outputCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+        });
+
+        // Envoyer les frames au serveur pour traitement
+        async function processFrame() {
+            if (isProcessing) {
+                animationId = requestAnimationFrame(processFrame);
+                return;
+            }
+            
+            isProcessing = true;
+            
+            // Capturer la frame actuelle
+            hiddenCtx.drawImage(video, 0, 0);
+            const imageData = hiddenCanvas.toDataURL('image/jpeg', 0.8);
+            
+            try {
+                // Envoyer au serveur Flask
+                const response = await fetch('/process_frame', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Afficher l'image traitée
+                    const img = new Image();
+                    img.onload = () => {
+                        outputCtx.drawImage(img, 0, 0);
+                    };
+                    img.src = result.image;
+                }
+                
+            } catch (error) {
+                console.error('Erreur traitement:', error);
+            }
+            
+            isProcessing = false;
+            animationId = requestAnimationFrame(processFrame);
+        }
+    </script>
+</body>
+</html>
